@@ -38,8 +38,18 @@ go list -m -json github.com/spf13/pflag | ./go-license-finder
 
 ### Get licenses for all build time dependencies
 
+This uses https://github.com/JoakimSoderberg/gobindep to get module dependencies from a Go executable.
+
 ```bash
+# Used for getting Go modules from the compiled executable
+go install github.com/JoakimSoderberg/gobindep
+
+# Build the executable
 go build
+
+# Get the compile time dependencies.
+# We pass them to "go list" in a format it expects,
+# which in turn outputs JSON that "go-license-finder" expects as input.
 gobindep ./go-license-finder | awk '{ print $1"@"$2 }' | xargs go list -m -u -json | ./go-license-finder
 ```
 

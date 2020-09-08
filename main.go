@@ -60,6 +60,9 @@ type Dependency struct {
 
 var verbose bool
 var depTimeout time.Duration
+var globalTimeout time.Duration
+var errorIsFatal bool
+var includeLicenseContents bool
 
 func printProgress(format string, args ...interface{}) {
 	if verbose {
@@ -100,6 +103,10 @@ Flags:
 	pflag.StringVarP(&inputFile, "input-file", "i", "", "Input filename containing JSON to read")
 	pflag.BoolVarP(&verbose, "verbose", "v", false, "Adds extra log messages")
 	pflag.DurationVar(&depTimeout, "dependency-timeout", time.Duration(5*time.Second), "Timeout for finding the license for each dependency")
+	pflag.DurationVar(&globalTimeout, "timeout", time.Duration(5*time.Minute), "Global timeout for finding the license for all dependencies")
+	pflag.BoolVarP(&errorIsFatal, "error-is-fatal", "e", false, "Exit fatally on any type of error, for example if the license is not found for a dependency. Default is to just store the Error in the output")
+	pflag.BoolVar(&includeLicenseContents, "include-license-contents", true, "Set to false to exclude the contents of the License file")
+
 	pflag.Parse()
 
 	var f io.Reader
@@ -118,17 +125,29 @@ Flags:
 		f = os.Stdin
 	}
 
-	// This reads JSON from the input, multiple objects following each other is allowed.
-	dec := json.NewDecoder(bufio.NewReader(f))
-	for {
-		var dep Dependency
-		if err := dec.Decode(&dep); err == io.EOF {
-			printProgress("EOF")
-			break
-		} else if err != nil {
-			log.Fatal(err)
+	ch := make(chan struct{}, 1)
+	go func() {
+
+		// This reads JSON from the input, multiple objects following each other is allowed.
+		dec := json.NewDecoder(bufio.NewReader(f))
+		for {
+			var dep Dependency
+			if err := dec.Decode(&dep); err == io.EOF {
+				printProgress("EOF")
+				break
+			} else if err != nil {
+				log.Fatal(err)
+			}
+			GetDependencyLicense(dep)
 		}
-		GetDependencyLicense(dep)
+
+		ch <- struct{}{}
+	}()
+
+	select {
+	case _ = <-ch:
+	case <-time.After(globalTimeout):
+		log.Fatalf("Global timeout elapsed after %s trying to get the licenses for", globalTimeout)
 	}
 }
 
@@ -168,11 +187,13 @@ func GetDependencyLicense(dep Dependency) {
 			Confidence: match.Confidence,
 		}
 
-		b, err := ioutil.ReadFile(output.License.Path)
-		if err != nil {
-			output.License.Error = fmt.Sprintf("Failed to open license file: %s", err.Error())
+		if includeLicenseContents {
+			b, err := ioutil.ReadFile(output.License.Path)
+			if err != nil {
+				output.License.Error = fmt.Sprintf("Failed to open license file: %s", err.Error())
+			}
+			output.License.Contents = string(b)
 		}
-		output.License.Contents = string(b)
 	}
 
 	bytes, err := json.Marshal(output)
@@ -182,4 +203,8 @@ func GetDependencyLicense(dep Dependency) {
 	}
 
 	fmt.Println(string(bytes))
+
+	if errorIsFatal && output.License.Error != "" {
+		log.Fatalf("Fatal error for \"%s\": %s", dep.Path, output.License.Error)
+	}
 }
