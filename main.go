@@ -14,7 +14,10 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/go-enry/go-license-detector/v4/licensedb"
+	"gopkg.in/yaml.v2"
 )
+
+// TODO: Add support for google/go-licenses also
 
 const exampleInput = `{
 	"Path": "gopkg.in/yaml.v2",
@@ -63,6 +66,7 @@ var depTimeout time.Duration
 var globalTimeout time.Duration
 var errorIsFatal bool
 var includeLicenseContents bool
+var knownLicensePath string
 
 func printProgress(format string, args ...interface{}) {
 	if verbose {
@@ -106,6 +110,7 @@ Flags:
 	pflag.DurationVar(&globalTimeout, "timeout", time.Duration(5*time.Minute), "Global timeout for finding the license for all dependencies")
 	pflag.BoolVarP(&errorIsFatal, "error-is-fatal", "e", false, "Exit fatally on any type of error, for example if the license is not found for a dependency. Default is to just store the Error in the output")
 	pflag.BoolVar(&includeLicenseContents, "include-license-contents", true, "Set to false to exclude the contents of the License file")
+	pflag.StringVarP(&knownLicensePath, "known-licenses-config", "k", "", "Path to a file containng a map of known licenses in JSON/YAML. Key should be Path@Version. This is checked first before searching for the license")
 
 	pflag.Parse()
 
@@ -151,11 +156,64 @@ Flags:
 	}
 }
 
+type KnownLicense struct {
+	Name string `yaml:"Name"` // Name of the License according to https://spdx.org/licenses/
+	Path string `yaml:"Path"`
+}
+
+type KnownLicenses struct {
+	Licenses map[string]KnownLicense `yaml:licenses`
+}
+
+func readKnownLicenses(path string) (*KnownLicenses, error) {
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var known KnownLicenses
+
+	err = yaml.Unmarshal(content, &known)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Add verification of License names according to https://spdx.org/licenses/
+
+	return &known, nil
+}
+
 // GetDependencyLicense tries to figure out the license for a given dependency.
 func GetDependencyLicense(dep Dependency) {
 
 	ch := make(chan []licensedb.Result, 1)
 	go func() {
+		if knownLicensePath != "" {
+			known, err := readKnownLicenses(knownLicensePath)
+			if err != nil {
+				log.Fatalf("Failed to read known license config file: %s\n", err)
+			}
+
+			for _, name := range []string{dep.Path + "@" + dep.Update.Version, dep.Path} {
+				log.Println("Looking for ", name)
+				if knownLicense, ok := known.Licenses[name]; ok {
+					log.Println("  FOUND")
+					results := make([]licensedb.Result, 1)
+					results[0].Arg = dep.Dir
+					results[0].ErrStr = ""
+					results[0].Matches = []licensedb.Match{
+						{
+							File:       knownLicense.Path,
+							Confidence: 1.0,
+							License:    knownLicense.Name,
+						},
+					}
+					ch <- results
+					return
+				}
+			}
+		}
+
 		// Figure out what license this dependency has.
 		results := licensedb.Analyse(dep.Dir)
 		ch <- results

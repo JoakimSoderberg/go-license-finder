@@ -13,6 +13,7 @@ require (
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.5
 	gopkg.in/neurosnap/sentences.v1 v1.0.6 // indirect
+	gopkg.in/yaml.v2 v2.2.4
 )
 
 // Used by cmd/license-finder.go
