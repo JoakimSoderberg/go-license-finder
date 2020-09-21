@@ -18,6 +18,8 @@ import (
 )
 
 // TODO: Add support for google/go-licenses also
+// TODO: Move all but cli parts into separate package
+// TODO: Add tests
 
 const exampleInput = `{
 	"Path": "gopkg.in/yaml.v2",
@@ -188,6 +190,7 @@ func GetDependencyLicense(dep Dependency) {
 
 	ch := make(chan []licensedb.Result, 1)
 	go func() {
+		// TODO: Break out into function
 		if knownLicensePath != "" {
 			known, err := readKnownLicenses(knownLicensePath)
 			if err != nil {
