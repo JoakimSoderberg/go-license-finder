@@ -20,6 +20,9 @@ import (
 // TODO: Add support for google/go-licenses also
 // TODO: Move all but cli parts into separate package
 // TODO: Add tests
+// TODO: Get rid of dependency to go-license-detector
+// TODO: Add support for separating each part of the scan
+//       for example, finding the potential license files
 
 const exampleInput = `{
 	"Path": "gopkg.in/yaml.v2",
@@ -185,66 +188,97 @@ func readKnownLicenses(path string) (*KnownLicenses, error) {
 	return &known, nil
 }
 
+type AnalyzeSummary struct {
+	Result             licensedb.Result
+	LeavePathUntouched bool // Should we touch the final License path or not?
+}
+
 // GetDependencyLicense tries to figure out the license for a given dependency.
 func GetDependencyLicense(dep Dependency) {
 
-	ch := make(chan []licensedb.Result, 1)
+	ch := make(chan AnalyzeSummary, 1)
 	go func() {
 		// TODO: Break out into function
 		if knownLicensePath != "" {
+			log.Printf("Opening config file for Known licenses:\n  %s", knownLicensePath)
 			known, err := readKnownLicenses(knownLicensePath)
 			if err != nil {
 				log.Fatalf("Failed to read known license config file: %s\n", err)
 			}
 
-			for _, name := range []string{dep.Path + "@" + dep.Update.Version, dep.Path} {
+			if len(known.Licenses) == 0 {
+				log.Fatalf("%s contained to licenses! Did you put them under \"licenses:\"?", knownLicensePath)
+			}
+
+			for k := range known.Licenses {
+				log.Println(k)
+			}
+
+			for _, name := range []string{dep.Path + "@" + dep.Version, dep.Path} {
 				log.Println("Looking for ", name)
 				if knownLicense, ok := known.Licenses[name]; ok {
-					log.Println("  FOUND")
-					results := make([]licensedb.Result, 1)
-					results[0].Arg = dep.Dir
-					results[0].ErrStr = ""
-					results[0].Matches = []licensedb.Match{
-						{
-							File:       knownLicense.Path,
-							Confidence: 1.0,
-							License:    knownLicense.Name,
+					log.Printf("  Found known license entry for %s\n", name)
+					summary := AnalyzeSummary{
+						Result: licensedb.Result{
+							Arg:    dep.Dir,
+							ErrStr: "",
+							Matches: []licensedb.Match{
+								{
+									File:       knownLicense.Path,
+									Confidence: 1.0,
+									License:    knownLicense.Name,
+								},
+							},
 						},
+						// We provide the Path for the License in the
+						// known licenses config, so we should not touch it.
+						LeavePathUntouched: true,
 					}
-					ch <- results
+
+					ch <- summary
 					return
 				}
 			}
 		}
 
-		// Figure out what license this dependency has.
 		results := licensedb.Analyse(dep.Dir)
-		ch <- results
+
+		// Since we only pass a single directory we expect only one result
+		if len(results) != 1 {
+			log.Fatalf("Expected a single result for %s but got %d", dep.Dir, len(results))
+		}
+
+		// Figure out what license this dependency has.
+		summary := AnalyzeSummary{
+			Result: results[0],
+			// We should have found the path to the license automatically,
+			// relative to the source directory for the dependency.
+			LeavePathUntouched: false,
+		}
+		ch <- summary
 	}()
 
-	var results []licensedb.Result
+	var summary AnalyzeSummary
 
 	select {
-	case results = <-ch:
+	case summary = <-ch:
 	case <-time.After(depTimeout):
 		log.Fatalf("Timed out after %v trying to get the license for: '%s'", depTimeout, dep.Path)
 	}
 
-	// Since we only pass a single directory we expect only one result
-	if len(results) != 1 {
-		fmt.Fprintf(os.Stderr, "Expected a single result for %s but got %d", dep.Dir, len(results))
-		os.Exit(4)
-	}
-
-	result := results[0]
 	output := dep
-	output.License.Error = result.ErrStr
+	output.License.Error = summary.Result.ErrStr
 
-	if len(result.Matches) > 0 {
-		match := result.Matches[0]
+	if len(summary.Result.Matches) > 0 {
+		match := summary.Result.Matches[0]
+		licensePath := match.File
+		if !summary.LeavePathUntouched {
+			licensePath = filepath.Join(output.Dir, match.File)
+		}
+
 		output.License = License{
 			Name:       match.License,
-			Path:       filepath.Join(dep.Dir, match.File),
+			Path:       licensePath,
 			Confidence: match.Confidence,
 		}
 
