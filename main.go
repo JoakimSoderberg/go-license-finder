@@ -200,7 +200,7 @@ func GetDependencyLicense(dep Dependency) {
 	go func() {
 		// TODO: Break out into function
 		if knownLicensePath != "" {
-			log.Printf("Opening config file for Known licenses:\n  %s", knownLicensePath)
+			//log.Printf("Opening config file for Known licenses:\n  %s", knownLicensePath)
 			known, err := readKnownLicenses(knownLicensePath)
 			if err != nil {
 				log.Fatalf("Failed to read known license config file: %s\n", err)
@@ -215,7 +215,7 @@ func GetDependencyLicense(dep Dependency) {
 			}
 
 			for _, name := range []string{dep.Path + "@" + dep.Version, dep.Path} {
-				log.Println("Looking for ", name)
+				//log.Println("Looking for ", name)
 				if knownLicense, ok := known.Licenses[name]; ok {
 					log.Printf("  Found known license entry for %s\n", name)
 					summary := AnalyzeSummary{
