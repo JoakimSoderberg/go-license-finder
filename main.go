@@ -210,9 +210,9 @@ func GetDependencyLicense(dep Dependency) {
 				log.Fatalf("%s contained to licenses! Did you put them under \"licenses:\"?", knownLicensePath)
 			}
 
-			for k := range known.Licenses {
-				log.Println(k)
-			}
+			//for k := range known.Licenses {
+			//	log.Println(k)
+			//}
 
 			for _, name := range []string{dep.Path + "@" + dep.Version, dep.Path} {
 				//log.Println("Looking for ", name)
